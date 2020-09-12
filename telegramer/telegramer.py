@@ -21,14 +21,12 @@ from telegram.update import Update
 from config import settings
 
 TOKEN = os.getenv('TELEGRAM_TOKEN')
-# '915586801:AAHyx1idINpOXLWZSa44kboAuMkC6w9EmB8'
 
 logger = logging.getLogger('connectors.telegramer')
 
 redis_host = os.getenv('REDIS_HOST', 'localhost')
 redis_password = os.getenv('REDIS_PASSWORD', '')
 
-# l.warning(redis_password)
 _r: Redis = redis.client.StrictRedis(host=redis_host, password=redis_password)
 
 dispatcher: Dispatcher = None
@@ -57,9 +55,10 @@ class TGHook(threading.Thread):
         while True:
             message = p.get_message(timeout=1)
             # l.debug('checking messages...')
-            if not message or message['type'] != 'message': continue
+            if not message or message['type'] != 'message':
+                continue
 
-            parsed = json.loads(message['data'])
+            # parsed = json.loads(message['data'])
             # msg = f"{msg['text']}"
             # l.debug(u'Got message: %s' % json.dumps(parsed['message'], indent=4, sort_keys=True))
             if message['channel'] == b'cryptoman.tg_hook':
@@ -197,8 +196,8 @@ def connect():
     bot = telegram.Bot(TOKEN, request=request)
 
     logger.debug("Starting the bot")
-    bot.send_message("1037465279", f'Ready to start working\n'
-                                   f'/help\nor\n/start')
+    bot.send_message("996224228", f'Ready to start working\n'
+                                  f'/help\nor\n/start')
 
     # updater = Updater(bot=bot, use_context=True)
     updater = Updater(bot=bot, use_context=True)
@@ -227,7 +226,6 @@ def connect():
     # inline_caps_handler = InlineQueryHandler(inline_caps)
     # dispatcher.add_handler(inline_caps_handler)
 
-    global handlers
     handlers.append("/start")
     handlers.append("/help")
     handlers.append("/clear")
