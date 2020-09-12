@@ -20,30 +20,16 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="c422a841-fcff-4439-9183-be3ab5a6aa0d" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/ENTRYPOINT.sh" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/binancer/logger.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/binancer/logger_config.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/connectors2/binancer.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/connectors2/binancer_client.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/connectors2/tasks.py" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/connectors2/trade_mate.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/telegramer/__init__.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/telegramer/management/commands/run_binancer.py" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/telegramer/telegramer.py" afterDir="false" />
       <change afterPath="$PROJECT_DIR$/../cryptoman-react" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/../cryptoman-telegramer" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../../README.md" beforeDir="false" afterPath="$PROJECT_DIR$/../../README.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../../docker/K8S/cryptoman/cryptoman-ingress.yml" beforeDir="false" afterPath="$PROJECT_DIR$/../../docker/K8S/cryptoman/cryptoman-ingress.yml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Dockerfile" beforeDir="false" afterPath="$PROJECT_DIR$/Dockerfile" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/binancer/binance_thread.py" beforeDir="false" afterPath="$PROJECT_DIR$/binancer/binance_thread.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/binancer/binancer.py" beforeDir="false" afterPath="$PROJECT_DIR$/binancer/binancer.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/binancer/binancer_client.py" beforeDir="false" afterPath="$PROJECT_DIR$/binancer/binancer_client.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/binancer/tasks.py" beforeDir="false" afterPath="$PROJECT_DIR$/binancer/tasks.py" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/vcs.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/vcs.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/config/settings.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/settings.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/config/urls.py" beforeDir="false" afterPath="$PROJECT_DIR$/config/urls.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/connectors2/telegram.py" beforeDir="false" />
-      <change beforePath="$PROJECT_DIR$/cryptoman/models.py" beforeDir="false" afterPath="$PROJECT_DIR$/cryptoman/models.py" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/devspace.yaml" beforeDir="false" afterPath="$PROJECT_DIR$/devspace.yaml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/requirements.txt" beforeDir="false" afterPath="$PROJECT_DIR$/requirements.txt" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../cryptoman-socketshark" beforeDir="false" afterPath="$PROJECT_DIR$/../cryptoman-socketshark" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/../cryptoman-telegramer/telegramer/telegramer.py" beforeDir="false" afterPath="$PROJECT_DIR$/../cryptoman-telegramer/telegramer/telegramer.py" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../cryptoman-v1-0" beforeDir="false" afterPath="$PROJECT_DIR$/../cryptoman-v1-0" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../cryptoman-v2-0" beforeDir="false" afterPath="$PROJECT_DIR$/../cryptoman-v2-0" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/../tradingview-udf-binance-node" beforeDir="false" afterPath="$PROJECT_DIR$/../tradingview-udf-binance-node" afterDir="false" />
@@ -600,7 +586,7 @@
     </option>
   </component>
   <component name="Git.Settings">
-    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$/../.." />
+    <option name="RECENT_GIT_ROOT_PATH" value="$PROJECT_DIR$" />
   </component>
   <component name="ProjectId" id="1gxaDcIB9YS1b7sLhUxgpWcvdwj" />
   <component name="ProjectLevelVcsManager" settingsEditedManually="true">
@@ -616,19 +602,19 @@
     <property name="RunOnceActivity.OpenProjectViewOnStart" value="true" />
     <property name="RunOnceActivity.ShowReadmeOnStart" value="true" />
     <property name="WebServerToolWindowFactoryState" value="false" />
-    <property name="last_opened_file_path" value="$PROJECT_DIR$" />
+    <property name="last_opened_file_path" value="$PROJECT_DIR$/telegramer" />
     <property name="settings.editor.selected.configurable" value="preferences.sourceCode" />
   </component>
   <component name="RecentsManager">
-    <key name="CopyFile.RECENT_KEYS">
-      <recent name="$PROJECT_DIR$" />
-      <recent name="$PROJECT_DIR$/telegramer" />
-      <recent name="$PROJECT_DIR$/binancer" />
-    </key>
     <key name="MoveFile.RECENT_KEYS">
       <recent name="$PROJECT_DIR$/binancer" />
       <recent name="$PROJECT_DIR$/mine" />
       <recent name="$PROJECT_DIR$" />
+    </key>
+    <key name="CopyFile.RECENT_KEYS">
+      <recent name="$PROJECT_DIR$/telegramer" />
+      <recent name="$PROJECT_DIR$" />
+      <recent name="$PROJECT_DIR$/binancer" />
     </key>
   </component>
   <component name="SvnConfiguration">
@@ -646,7 +632,7 @@
       <workItem from="1599378283146" duration="325000" />
       <workItem from="1599725644475" duration="515000" />
       <workItem from="1599752180431" duration="276000" />
-      <workItem from="1599824899753" duration="6709000" />
+      <workItem from="1599824899753" duration="7113000" />
     </task>
     <servers />
   </component>

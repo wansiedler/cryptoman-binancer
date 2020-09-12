@@ -195,3 +195,4 @@ logging.config.dictConfig(DEFAULT_LOGGING)
 AUTH_USER_MODEL = 'cryptoman.MyUser'
 
 TG_HOOK_TOKEN = 'TGBOT'
+TELEGRAM_DNS = 'www.wansiedler.com'
