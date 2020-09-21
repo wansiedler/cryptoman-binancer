@@ -21,6 +21,5 @@ from telegramer import telegramer
 
 urlpatterns = [
     path('admin/', admin.site.urls),
-
     path(settings.TG_HOOK_TOKEN, telegramer.hook),
 ]

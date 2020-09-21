@@ -14,6 +14,7 @@ from cryptoman.models import Order
 from binancer.common import format_stacktrace
 from binancer.binancer import process_signal, clients, connect, process_smart_order
 from binancer.tasks import open_order, open_pending, close_order, cancel_order, add_order
+
 # from binancer import logger
 
 queue: typing.Optional[Queue] = None
@@ -27,23 +28,31 @@ working_threads = []
 
 logger = logging.getLogger("")
 
-
 logger.debug("Starting thread")
 
 redis_host = os.getenv('REDIS_HOST', 'localhost')
 redis_password = os.getenv('REDIS_PASSWORD', '')
 
 
+def get_redis() -> Redis:
+    if redis_password:
+        redis_access: Redis = redis.client.StrictRedis(host=redis_host, password=redis_password)
+    else:
+        redis_access: Redis = redis.client.StrictRedis(host=redis_host)
+    return redis_access
+
+
 def init_thread():
     global queue
-    logger.debug('Initializing %s threads' % WORKERS_AMOUNT)
+    queue = Queue()
+
+    logger.debug(f'Создам тредов: {WORKERS_AMOUNT}')
     for i in range(WORKERS_AMOUNT):
         ticker_thread = TickerThread(i)
         ticker_thread.daemon = True
         ticker_thread.start()
         working_threads.append(ticker_thread)
 
-    queue = Queue()
     for i in range(TRADE_AMOUNT):
         binance_trade_thread = BinanceTradeThread(queue, i)
         binance_trade_thread.daemon = True
@@ -67,31 +76,23 @@ def exit_thread():
         queue.put(('EXIT', 0, 0, False))
 
 
-def get_redis() -> Redis:
-    if redis_password:
-        redis_connection: Redis = redis.client.StrictRedis(host=redis_host, password=redis_password)
-    else:
-        redis_connection: Redis = redis.client.StrictRedis(host=redis_host)
-    return redis_connection
-
-
 class BinanceThread(threading.Thread):
     def __init__(self):
         super().__init__()
-        logger.debug('Creating a Binance Thread')
+        logger.debug('Создаю тред Binance')
 
-        self.r: Redis = get_redis()
+        self.redis_access: Redis = get_redis()
 
     def run(self):
-        logger.debug('Running this Binance Thread')
+        logger.debug('Запускаю тред Binance')
         while True:
             try:
                 # message = p.get_message(timeout=10)
-                message = self.r.blpop('binance')
+                message = self.redis_access.blpop('binance')
                 if not message:
                     continue
                 message = json.loads(message[1])
-                logger.debug(f'Binance Thread message: {message["channel"]} {message["data"]}')
+                logger.debug(f'Есть задача на отработку: {message["channel"]} {message["data"]}')
 
                 if message['channel'] == 'signal':
                     process_signal(message['data'])
@@ -120,6 +121,7 @@ class BinanceThread(threading.Thread):
                     queue.put((command, order_id, quantity, sync))
 
                 elif message['channel'] == 'smart_order':
+                    logger.warning('###поступил новый ордер на отработку!###')
                     process_smart_order(int(message['data']))
 
             except Exception as e:
@@ -132,7 +134,7 @@ class BinanceThread(threading.Thread):
 class BinanceTradeThread(threading.Thread):
     def __init__(self, incoming_queue, index):
         super().__init__()
-        logger.debug('Creating BinanceTradeThread #%s' % index)
+        logger.debug('Создаю поток для торгов BinanceTradeThread #%s' % index)
         self.queue = incoming_queue
         self.index = index
 
@@ -142,7 +144,7 @@ class BinanceTradeThread(threading.Thread):
         self.r.hset('thread_counters', str(self.index), 0)
 
     def run(self):
-        logger.debug(f' Running BinanceTradeThread #{self.index}')
+        logger.debug(f' Запускаю поток для торгов  BinanceTradeThread #{self.index}')
         while True:
             try:
                 command, order_id, quantity, sync = self.queue.get()  # type: str, int, float, bool
@@ -195,14 +197,11 @@ class BinanceTradeThread(threading.Thread):
 class TickerThread(threading.Thread):
     def __init__(self, index):
         super().__init__()
-        logger.debug('Creating Ticker Thread #%s' % index)
-
+        self.index = index
+        logger.debug(f'Запускаю поток тикеров TickerThread #{self.index}')
         self.r: Redis = get_redis()
 
-        self.index = index
-
     def run(self):
-        logger.debug(' Ticker Thread #%s, reading client ID as jobs from redis', self.index)
         while True:
             try:
                 message = self.r.blpop('jobs')

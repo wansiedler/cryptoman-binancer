@@ -6,199 +6,191 @@ images:
     preferSyncOverRebuild: true
     injectRestartHelper: true
     appendDockerfileInstructions:
-    - USER root
+      - USER root
 
 deployments:
-- name: cryptoman-binancer
-  namespace: cryptoman
-  helm:
-    componentChart: true
-    values:
-#      service:
-#        type: ClusterIP
-#        ports:
-#          - port: 8000
-      containers:
-      - image: eu.gcr.io/my-projectjwmt7xk/cryptoman-binancer
-        env:
-            - name: SECRET_KEY
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: SECRET_KEY
-            - name: SENTRY_KEY
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: SENTRY_KEY
+  - name: cryptoman-binancer
+    namespace: cryptoman
+    helm:
+      componentChart: true
+      values:
+        containers:
+          - image: eu.gcr.io/my-projectjwmt7xk/cryptoman-binancer
+            env:
+              - name: SECRET_KEY
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: SECRET_KEY
+              - name: SENTRY_KEY
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: SENTRY_KEY
 
-            - name: SOCKETSHARK_PORT
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: SOCKETSHARK_PORT
+              - name: SOCKETSHARK_PORT
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: SOCKETSHARK_PORT
 
-            - name: DB_ENGINE
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DB_ENGINE
-            - name: DB_NAME1
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DB_NAME1
-            - name: DB_USER
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DB_USER
-            - name: DB_PASSWORD
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DB_PASSWORD
-            - name: DB_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DB_HOST
-            - name: DB_PORT
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DB_PORT
+              - name: DB_ENGINE
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DB_ENGINE
+              - name: DB_NAME1
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DB_NAME1
+              - name: DB_USER
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DB_USER
+              - name: DB_PASSWORD
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DB_PASSWORD
+              - name: DB_HOST
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DB_HOST
+              - name: DB_PORT
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DB_PORT
 
-            - name: REDIS_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: REDIS_HOST
-            # - name: REDIS_PASSWORD
-            #   valueFrom:
-            #     configMapKeyRef:
-            #       name: cryptoman-config
-            #       key: REDIS_PASSWORD
+              - name: REDIS_HOST
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: REDIS_HOST
+              # - name: REDIS_PASSWORD
+              #   valueFrom:
+              #     configMapKeyRef:
+              #       name: cryptoman-config
+              #       key: REDIS_PASSWORD
 
-            - name: CELERY_BROKER_URL
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: CELERY_BROKER_URL
-            - name: CELERY_RESULT_BACKEND
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: CELERY_RESULT_BACKEND
+              - name: CELERY_BROKER_URL
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: CELERY_BROKER_URL
+              - name: CELERY_RESULT_BACKEND
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: CELERY_RESULT_BACKEND
 
-            - name: DJANGO_LOG_LEVEL
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DJANGO_LOG_LEVEL
-            - name: DEBUG
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DEBUG
+              - name: DJANGO_LOG_LEVEL
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DJANGO_LOG_LEVEL
+              - name: DEBUG
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DEBUG
 
-            - name: WS_LOCATION
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: WS_LOCATION
-            - name: DATAFEED
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DATAFEED
+              - name: WS_LOCATION
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: WS_LOCATION
+              - name: DATAFEED
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DATAFEED
 
 
 
-            - name: BOTS_TOKEN
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: BOTS_TOKEN
-            - name: TELEGRAM_TOKEN
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: TELEGRAM_TOKEN
-            - name: TELEGRAM_HOOK_TOKEN
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: TELEGRAM_HOOK_TOKEN
-            - name: TELEGRAM_DNS
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: TELEGRAM_DNS
-            - name: TELEGRAM_NOTIFICATION_USER
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: TELEGRAM_NOTIFICATION_USER
-            - name: EMAIL_BACKEND
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: EMAIL_BACKEND
-            - name: EMAIL_HOST
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: EMAIL_HOST
-            - name: EMAIL_PORT
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: EMAIL_PORT
-            - name: DEFAULT_FROM_EMAIL
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: DEFAULT_FROM_EMAIL
-            - name: MAILER_LIST
-              valueFrom:
-                configMapKeyRef:
-                  name: cryptoman-config
-                  key: MAILER_LIST
+              - name: BOTS_TOKEN
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: BOTS_TOKEN
+              - name: TELEGRAM_TOKEN
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: TELEGRAM_TOKEN
+              - name: TELEGRAM_HOOK_TOKEN
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: TELEGRAM_HOOK_TOKEN
+              - name: TELEGRAM_DNS
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: TELEGRAM_DNS
+              - name: TELEGRAM_NOTIFICATION_USER
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: TELEGRAM_NOTIFICATION_USER
+              - name: EMAIL_BACKEND
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: EMAIL_BACKEND
+              - name: EMAIL_HOST
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: EMAIL_HOST
+              - name: EMAIL_PORT
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: EMAIL_PORT
+              - name: DEFAULT_FROM_EMAIL
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: DEFAULT_FROM_EMAIL
+              - name: MAILER_LIST
+                valueFrom:
+                  configMapKeyRef:
+                    name: cryptoman-config
+                    key: MAILER_LIST
 
 
 
 dev:
-#  ports:
-#  - imageName: app
-##    forward:
-##    - port: 8000
   open:
-  - url: http://localhost:8000
+    - url: http://localhost:8000
   sync:
-  - imageName: app
-    excludePaths:
-    - .git/
-    uploadExcludePaths:
-    - venv
-    - .venv
-    - node_modules
-    - .idea
-    - '*.pid'
-    - .env
-    - .md
-    - .yml
-    - README.md
-    - Dockerfile.debian
-    - Dockerfile
-    - Dockerfile.alpine
-    - devspace.yaml
-    onUpload:
-      restartContainer: true
+    - imageName: app
+      excludePaths:
+        - .git/
+      uploadExcludePaths:
+        - venv
+        - .venv
+        - node_modules
+        - .idea
+        - '*.pid'
+        - .env
+        - .md
+        - .yml
+        - README.md
+        - Dockerfile.debian
+        - Dockerfile
+        - Dockerfile.alpine
+        - devspace.yaml
+      onUpload:
+        restartContainer: true
 profiles:
-- name: production
-  patches:
-  - op: remove
-    path: images.app.injectRestartHelper
-  - op: remove
-    path: images.app.appendDockerfileInstructions
+  - name: production
+    patches:
+      - op: remove
+        path: images.app.injectRestartHelper
+      - op: remove
+        path: images.app.appendDockerfileInstructions

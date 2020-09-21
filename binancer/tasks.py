@@ -12,7 +12,7 @@ from binance.enums import SIDE_BUY, SIDE_SELL, ORDER_TYPE_MARKET, TIME_IN_FORCE_
 from django.db import transaction
 
 from cryptoman.models import Order, BalanceLimits, OrderStatus, Strategy, StrategyGuardLog
-from binancer.binancer import BClient, subscriptions
+from binancer.binancer import Binance_Client, subscriptions
 from binancer.binancer_client import account_buy, calc_commission, get_quotes, trade
 from binancer.common import MakeDirty, lock_instance, cfloat
 
@@ -33,7 +33,7 @@ def parent_lock(order: Order):
 '''
 
 
-def open_order(order_id: int, client: BClient):
+def open_order(order_id: int, client: Binance_Client):
     instance: Order = Order.objects.get(id=order_id)
     try:
         side = SIDE_BUY if instance.order_side == 0 else SIDE_SELL
@@ -183,7 +183,7 @@ def open_order(order_id: int, client: BClient):
         logger.error(f'ошибка открытия ордера #{instance.id} {e}', order=instance)
 
 
-def add_order(order_id: int, client: BClient, quantity: float):
+def add_order(order_id: int, client: Binance_Client, quantity: float):
     instance: Order = Order.objects.get(id=order_id)
     # if True:
     try:
@@ -312,7 +312,7 @@ def add_order(order_id: int, client: BClient, quantity: float):
         order_error.send(sender=Order, id=order_id)
 
 
-def close_order(order_id: int, client: BClient, quantity: float):
+def close_order(order_id: int, client: Binance_Client, quantity: float):
     try:
         instance: Order = Order.objects.get(id=order_id)
         side = SIDE_SELL if instance.order_side == 0 else SIDE_BUY
@@ -430,7 +430,7 @@ def close_order(order_id: int, client: BClient, quantity: float):
         traceback.print_exc()
 
 
-def open_pending(order_id: int, client: BClient):
+def open_pending(order_id: int, client: Binance_Client):
     instance = Order.objects.get(id=order_id)
     side = SIDE_BUY if instance.order_side == 0 else SIDE_SELL
     try:
@@ -472,7 +472,7 @@ def open_pending(order_id: int, client: BClient):
         logger.info(f'отложенный ордер успешно создан #{instance.id}', order=instance)
 
 
-def cancel_order(order_id: int, client: BClient):
+def cancel_order(order_id: int, client: Binance_Client):
     instance = Order.objects.get(id=order_id)
     if instance.order_id:
         if not instance.simulation and not instance.account.is_demo and instance.parent_order_id:

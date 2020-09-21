@@ -13,7 +13,8 @@ from dataclasses import dataclass, field
 from threading import Lock
 import atexit
 
-from binance.client import Client as BClient
+import binancer.binancer_client as binancer_client
+from binance.client import Client as Binance_Client
 from binance.websockets import BinanceSocketManager
 from django.db.models import Q, Count
 from redis import Redis
@@ -23,22 +24,20 @@ from binancer.signals import order_error, tick_processing
 from binancer.common import MakeDirty, lock_instance
 from binancer.common import cfloat
 
-import binancer.binancer_client as binancer_client
-
 clients: typing.Dict[int, 'AccountClient'] = {}
 quotes_maker: typing.Optional[BinanceSocketManager] = None
-subscriptions: typing.Dict[str, 'NQuote'] = {}
+subscriptions: typing.Dict[str, 'QuoteToTrack'] = {}
 
 redis_host = os.getenv('REDIS_HOST', 'localhost')
 redis_password = os.getenv('REDIS_PASSWORD', '')
-_r_quotes: Redis = redis.client.StrictRedis(host=redis_host, password=redis_password)
+redis_access: Redis = redis.client.StrictRedis(host=redis_host, password=redis_password)
 
 # logger = logging.getLogger("")
 from binancer import logger
 
 
 @dataclass
-class NQuote:
+class QuoteToTrack:
     ask: float
     bid: float
     min_lot: float
@@ -47,7 +46,7 @@ class NQuote:
 
 
 @dataclass
-class NOrder:
+class OrderToTrack:
     mode: 'TradingMode'
     symbol: str
     bot: typing.Optional[Bot]
@@ -77,7 +76,13 @@ class TradingMode(Enum):
     Stop = auto()
 
 
+# class Binancer():
+# @staticmethod
+
 def connect():
+    """
+    Синхронизирую и добавление аккаунтов в массив для отслеживания в потоках
+    """
     binancer_client.connect()
 
     # _r_quotes.delete("orders")
@@ -88,8 +93,8 @@ def connect():
         if account.is_demo:
             binance_client = None
         else:
-            binance_client = binancer_client.clients[account.id]
-            logger.info(f'подключение к Binance успешно {account.name}')
+            binance_client = binancer_client.binance_clients[account.id]
+            # logger.info(f'подключение к Binance успешно {account.name}')
 
         clients[account.id] = AccountClient(account, binance_client)
         clients[account.id].sync_orders()
@@ -97,23 +102,160 @@ def connect():
 
 @atexit.register
 def disconnect():
-    print('binancer down...')
+    """
+    Отключение бинанса
+    """
+    logger.info('Отключаю binancer')
     for client in clients.values():  # type: AccountClient
         if hasattr(client, 'bm'):
-            client.bm.close()
+            client.binance_socket_manager.close()
+
+
+def init_quotes_maker():
+    global quotes_maker
+
+    client = Binance_Client('', '')
+    quotes_maker = BinanceSocketManager(client)
+    quotes_maker.start_ticker_socket(process_multi_ticker)
+    subscribe_symbol('')
+
+
+def process_ticker(msg: dict):
+    global subscriptions
+    quote: QuoteToTrack = subscriptions[msg['s']]
+    quote.ask = float(msg['a'])
+    quote.bid = float(msg['b'])
+
+    check = redis_access.lindex(f'track{msg["s"]}', -1)
+    last_item = {}
+    if check:
+        last_item = json.loads(check)
+    if not check or last_item["a"] != msg["a"] or last_item["b"] != msg["b"]:
+        redis_access.hset('quotes', msg['s'], float(msg['b']))
+        redis_access.hset('quotes_ask', msg['s'], float(msg['a']))
+
+        redis_access.publish('common.quotes', json.dumps({
+            'subscription': 'common.quotes',
+            'data': {
+                'symbol': msg['s'],
+                'price': msg['b'],
+                'ask': msg['a'],
+            }
+        }))
+
+        redis_access.rpush(f'track{msg["s"]}', json.dumps({
+            'E': int(msg["E"]),
+            'a': msg['a'],
+            'b': msg['b'],
+        }))
+
+        tick_processing.send(sender=QuoteToTrack, symbol=msg['s'], quote=quote)
+    # logger.info(f'{msg["s"]} {msg["a"]}')
+    """
+    for client in list(clients.values()):  # type: AccountClient
+        if msg['s'] in client.symbols:
+            client.process_ticker(msg)
+    """
+
+
+def process_multi_ticker(messages: list):
+    try:
+        for message in messages:
+            if message['s'] in subscriptions:
+                process_ticker(message)
+        for client in clients:
+            # workers_queue.put(i)
+            redis_access.rpush('jobs', client)
+    except:
+        logger.info('\n'.join(traceback.format_exception(*sys.exc_info())))
+
+
+def subscribe_symbol(symbol: str):
+    global subscriptions, quotes_maker
+    if not quotes_maker:
+        logger.error('отсутствует базовое соединение для подписки на котировки')
+        return
+    if symbol not in subscriptions:
+        try:
+            tickers = quotes_maker._client.get_ticker()
+            for ticker in tickers:
+                if ticker['symbol'] in subscriptions:
+                    continue
+
+                logger.info('подписка на символ ' + ticker['symbol'])
+                sym, created = Symbol.objects.get_or_create(name=ticker['symbol'])
+                if created:
+                    with lock_instance(sym) as sym:
+                        symbol_info = quotes_maker._client.get_symbol_info(ticker['symbol'])
+                        min_lot = next(
+                            (float(f['minQty']) for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), 0)
+                        min_notional = next(
+                            (float(f['minNotional']) for f in symbol_info['filters'] if
+                             f['filterType'] == 'MIN_NOTIONAL'), 0)
+                        tick_size = next(
+                            (float(f['tickSize']) for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'),
+                            0)
+
+                        sym.min_notional = min_notional
+                        sym.min_lot = min_lot
+                        sym.tick_size = tick_size
+                        sym.base_asset = symbol_info['quoteAsset']
+                        sym.save()
+
+                quote = QuoteToTrack(
+                    float(ticker['askPrice']),
+                    float(ticker['bidPrice']),
+                    sym.min_lot,
+                    sym.min_notional,
+                    sym.tick_size
+                )
+                # if quote.min_notional > 0.001:
+                #    logger.info(f'{ticker["symbol"]} == {quote.min_notional} !')
+
+                subscriptions[ticker['symbol']] = quote
+                # logger.info('подписка выполнена')
+
+                # quotes_maker.start_symbol_ticker_socket(symbol, process_ticker)
+
+        except Exception as e:
+            traceback.print_exc()
+            logger.error(f'не удалось подписаться на пару {symbol}: Ошибка {e}')
+            return
+
+        # process_ticker({'s': symbol, 'a': quote.ask, 'b': quote.bid})
+        # logger.info('пара подписана')
+
+
+def check_in_work(order_id: int) -> bool:
+    for client in clients.values():
+        if any(hasattr(o, "order") and o.order.id == order_id and o.mode != TradingMode.Stop for o in client.orders):
+            return True
+    return False
+
+
+def process_smart_order(order_id):
+    """
+    Создание ордера
+    """
+    order = Order.objects.get(id=order_id)
+    logger.info(f'начинаю отработку ордера #{order_id}')
+    logger.info(f'аккаунт ордера #{order_id}: {order.account_id}')
+    if order.account_id not in clients:
+        logger.error(f'аккаунт {order.account.name} не подключен')
+    else:
+        clients[order.account.id].smart_order(order)
 
 
 class AccountClient:
-
-    def __init__(self, account: Account, client: BClient):
+    def __init__(self, account: Account, client: Binance_Client):
         # global quotes_maker
         self.account: Account = account
-        self.client: BClient = client
+        self.client: Binance_Client = client
         if not account.is_demo and account.api_key and account.secret_key:
-            bm = BinanceSocketManager(client)
-            self.bm = bm
+            binance_socket_manager = BinanceSocketManager(client)
+            self.binance_socket_manager = binance_socket_manager
             try:
-                bm.start_user_socket(self.process_trade)
+                binance_socket_manager.start_user_socket(self.process_trade)
             except BinanceAPIException as e:
                 logger.error(f'ошибка подключения {account.name}: {e}')
             else:
@@ -123,49 +265,50 @@ class AccountClient:
                     bm.start_ticker_socket(process_multi_ticker)
                     #bm.start_multiplex_socket(['!ticker@arr'], process_multi_ticker)
                 """
-                bm.start()
+                binance_socket_manager.start()
 
         self.symbols: typing.List[str] = []
-        self.orders: typing.List[NOrder] = []
+        self.orders_to_track: typing.List[OrderToTrack] = []
 
         self.lock = Lock()
 
-    def reconnect(self):
-        # global quotes_maker
-        if not self.account.is_demo and self.account.api_key and self.account.secret_key:
-            with self.lock:
-                # deinit
-                if self.bm:
-                    self.bm.close()
-                    # if quotes_maker == self.bm:
-                    #    quotes_maker = None
+    def smart_order(self, order: Order):
+        logger.info(f'отрабатываю ордер #{order.id}')
+        if order.symbol.name not in self.symbols:
+            logger.warning(f'{order.symbol.name} нету в подписках. подписываюсь. ')
+            subscribe_symbol(order.symbol.name)
+            self.symbols.append(order.symbol.name)
 
-                # reinit
-                self.account.refresh_from_db()
-                binancer_client.clients[self.account.id] = BClient(self.account.api_key, self.account.secret_key,
-                                                                   requests_params={'timeout': 10})
-                self.client = binancer_client.clients[self.account.id]
-                bm = BinanceSocketManager(self.client)
-                self.bm = bm
-                bm.start_user_socket(self.process_trade)
-                # if not quotes_maker:
-                #    quotes_maker = bm
-                #    bm.start_ticker_socket(process_multi_ticker)
-                bm.start()
+        if order.symbol.name not in subscriptions:
+            logger.error(f'не удалось открыть ордер по причине отсутствия подписки на пару {order.symbol.name}')
+            return
+
+        with self.lock:
+            status = TradingMode.PendingBuy if order.status == OrderStatus.PENDING else TradingMode.BuyReady
+            logger.info(f'статус ордера: {status}')
+            order_to_track = OrderToTrack(status, order.symbol.name, None, None, None, order.open_price)
+            order_to_track.tp_mode = 1
+            order_to_track.order = order
+            self.orders_to_track.append(order_to_track)
+
+        logger.info(f"локальный ордер на дальнейшую отработку #{order.id} успешно создан", order=order)
+
+        self.process_tickers(order.symbol.name, True)
 
     def process_tickers(self, symbol_name=None, new_signal=False):
+        # logger.info("отрабатываю тикеры")
         # if task_queue:
         #    task_queue.join()
 
         if new_signal:
-            print('> aquire lock')
+            logger.info('> aquire lock (new signal)')
 
         now = datetime.now()
 
         with self.lock:
             if new_signal:
-                print('> cycle')
-            for order in self.orders:  # type: NOrder
+                logger.info("> cycle")
+            for order in self.orders_to_track:  # type: OrderToTrack
                 if order.mode == TradingMode.Stop or new_signal and order.mode != TradingMode.BuyReady:
                     continue
                 if symbol_name and order.symbol != symbol_name:
@@ -209,23 +352,28 @@ class AccountClient:
 
                 # === Pending buy state ===
                 if order.mode == TradingMode.PendingBuy:
+                    info(f'ордер #{order.order.id} in pending buy state')
                     if order.order.order_kind == 0 and ask <= order.open_price or order.order.order_kind == 1 \
                             and ask >= order.open_price or order.order.order_kind == 2:
-                        info(f'ордер #{order.order.id} готов к открытию')
+                        info(f'меняю статус на pending buy')
                         order.mode = TradingMode.BuyReady
                     elif order.order.preopen_stop_time and now >= order.order.preopen_stop_time:
-                        info(f'таймаут отложки #{order.order.id}')
+                        info(f'таймаут отложки #{order.order.id}. отменяю ордер')
                         order.order.status = OrderStatus.CANCELLED
                         with MakeDirty(order.order):
                             order.order.save()
                         order.mode = TradingMode.Stop
+                    else:
+                        info(f'тип ордера: {order.order.order_kind}')
+                        info(f'аск: {ask} пока больше цены открытия {order.open_price}. ждем?')
 
                 # === Buy ready state ===
                 if order.mode == TradingMode.BuyReady:
                     order.mode = TradingMode.Stop
-
+                    info(f'ордер #{order.order.id} готов к открытию.')
                     if hasattr(order, "order"):
                         with MakeDirty(order.order):
+                            info(f'отменяю ордер #{order.order.id}')
                             order.order.status = OrderStatus.CANCELLED
                             order.order.save()
 
@@ -238,9 +386,9 @@ class AccountClient:
                     look_limits = BalanceLimits.objects.filter(strategy=order.strategy, account=self.account)
                     if not order.strategy or order.strategy.balance_limit_mode == 0 or not look_limits.exists():
                         if not self.account.is_demo:
-                            print('> get account')
+                            logger.info('> get account')
                             balances = self.client.get_account()['balances']
-                            print('> account ok')
+                            logger.info('> account ok')
                             balance = next(
                                 (b['free'] for b in balances if b['asset'] == base_cur), 0)
                             balance = float(balance)
@@ -380,7 +528,7 @@ class AccountClient:
                     try:
                         order.order.refresh_from_db()
                     except:
-                        print(f'order_id = {order.order.order_id}')
+                        logger.info(f'order_id = {order.order.order_id}')
                         traceback.print_exc()
                         order.mode = TradingMode.Stop
                         continue
@@ -504,7 +652,7 @@ class AccountClient:
                             levels_count = sum(1 for lvl in morder.takeprofit_levels if 'filled' not in lvl and not lvl.get('hidden'))
 
                             if levels_count == 0:
-                                print(f'количество уровней ордера {order.order.id} равно нулю')
+                                logger.info(f'количество уровней ордера {order.order.id} равно нулю')
                                 order.mode = TradingMode.Stop
                                 continue
 
@@ -616,12 +764,35 @@ class AccountClient:
 
             # refresh order states
             if new_signal:
-                print('> states')
+                logger.info('> states')
 
-            for order in self.orders:
+            for order in self.orders_to_track:
                 if order.mode != order.last_mode and hasattr(order, "order"):
-                    _r_quotes.hset('orders', order.order.id, 1 if order.mode != TradingMode.Stop else 0)
+                    redis_access.hset('orders', order.order.id, 1 if order.mode != TradingMode.Stop else 0)
                     order.last_mode = order.mode
+
+    def reconnect(self):
+        # global quotes_maker
+        if not self.account.is_demo and self.account.api_key and self.account.secret_key:
+            with self.lock:
+                # deinit
+                if self.binance_socket_manager:
+                    self.binance_socket_manager.close()
+                    # if quotes_maker == self.bm:
+                    #    quotes_maker = None
+
+                # reinit
+                self.account.refresh_from_db()
+                binancer_client.binance_clients[self.account.id] = Binance_Client(self.account.api_key, self.account.secret_key,
+                                                                                  requests_params={'timeout': 10})
+                self.client = binancer_client.binance_clients[self.account.id]
+                bm = BinanceSocketManager(self.client)
+                self.binance_socket_manager = bm
+                bm.start_user_socket(self.process_trade)
+                # if not quotes_maker:
+                #    quotes_maker = bm
+                #    bm.start_ticker_socket(process_multi_ticker)
+                bm.start()
 
     def process_trade(self, msg: dict):
         # if 'x' not in msg:
@@ -643,14 +814,14 @@ class AccountClient:
         try:
             morder_set = Order.objects.filter(id=order_id)
         except ValueError:
-            print(f'process_trade: wrong order_id: {order_id}')
+            logger.info(f'process_trade: wrong order_id: {order_id}')
             return
 
         if not morder_set.exists():
             return
 
         morder: Order = morder_set.first()
-        order = next((order for order in self.orders if hasattr(order, "order") and order.order.id == morder.id), None)
+        order = next((order for order in self.orders_to_track if hasattr(order, "order") and order.order.id == morder.id), None)
 
         def error(msg, **kwargs):
             logger.error(msg, strategy=order.strategy, **kwargs)
@@ -718,7 +889,7 @@ class AccountClient:
                                 f'ордер закрыт #{morder.id} {cfloat(morder.profit)} {order.symbol} {self.account.name}',
                                 extra={'notify': NotifyType.Closed})
                             order.mode = TradingMode.Stop
-                            _r_quotes.hset('orders', morder.id, 0)
+                            redis_access.hset('orders', morder.id, 0)
 
                         else:
                             order.takeprofit_order = morder.child_orders.filter(status=OrderStatus.PENDING).order_by(
@@ -741,70 +912,76 @@ class AccountClient:
                                 limit.balance += volume
                                 limit.save()
 
-    def add_order(self, morder):
-        order = NOrder(
-            mode=TradingMode.Ready if morder.status == OrderStatus.ACTIVE else TradingMode.PendingBuy,
-            symbol=morder.symbol.name,
-            bot=morder.bot,
-            strategy=morder.strategy,
-            signal=morder.signal,
-            open_price=morder.open_price,
+    def add_order(self, incoming_order_to_track):
+        """
+        Добавление ордера в массив для отслеживания в потоках
+        """
+        order_to_track = OrderToTrack(
+            mode=TradingMode.Ready if incoming_order_to_track.status == OrderStatus.ACTIVE else TradingMode.PendingBuy,
+            symbol=incoming_order_to_track.symbol.name,
+            bot=incoming_order_to_track.bot,
+            strategy=incoming_order_to_track.strategy,
+            signal=incoming_order_to_track.signal,
+            open_price=incoming_order_to_track.open_price,
         )
-        if order.mode == TradingMode.Ready and not morder.order_id:
-            order.mode = TradingMode.InMarket
-        order.last_mode = order.mode
-        order.quantity = morder.quantity_rest
-        order.stoploss_price = morder.stoploss_price
-        order.pending_stop_time = morder.pending_stop_time
-        order.trailing = morder.trailing_percent if morder.trailing_active else 0.0
-        order.trailing_level = next(
-            (l['stop_price'] for l in morder.takeprofit_levels if l['trailing'] and not l.get('filled')), None)
+        if order_to_track.mode == TradingMode.Ready and not incoming_order_to_track.order_id:
+            order_to_track.mode = TradingMode.InMarket
+        order_to_track.last_mode = order_to_track.mode
+        order_to_track.quantity = incoming_order_to_track.quantity_rest
+        order_to_track.stoploss_price = incoming_order_to_track.stoploss_price
+        order_to_track.pending_stop_time = incoming_order_to_track.pending_stop_time
+        order_to_track.trailing = incoming_order_to_track.trailing_percent if incoming_order_to_track.trailing_active else 0.0
+        order_to_track.trailing_level = next(
+            (takeprofit_level['stop_price'] for takeprofit_level in incoming_order_to_track.takeprofit_levels if takeprofit_level['trailing'] and not takeprofit_level.get('filled')), None)
         try:
-            order.order = Order.objects.get(id=morder.id)
+            order_to_track.order = Order.objects.get(id=incoming_order_to_track.id)
         except:
             traceback.print_exc()
-            print(f'order_id = {morder.id}')
+            logger.info(f'order_id = {incoming_order_to_track.id}')
             return
 
-        order.tp_mode = 0
+        order_to_track.tp_mode = 0
 
-        _r_quotes.hset('orders', morder.id, 1)
+        redis_access.hset('orders', incoming_order_to_track.id, 1)
 
-        if morder.symbol.name not in self.symbols:
-            subscribe_symbol(morder.symbol.name)
-            self.symbols.append(morder.symbol.name)
+        if incoming_order_to_track.symbol.name not in self.symbols:
+            subscribe_symbol(incoming_order_to_track.symbol.name)
+            self.symbols.append(incoming_order_to_track.symbol.name)
 
-        corder_set = morder.child_orders.filter(status=OrderStatus.PENDING).order_by('open_price')
+        corder_set = incoming_order_to_track.child_orders.filter(status=OrderStatus.PENDING).order_by('open_price')
         if corder_set.exists():
             corder: Order = corder_set.first()
-            order.takeprofit_order = corder
-            order.takeprofit_price = corder.open_price
-            order.takeprofit_quantity = corder.quantity
-        elif morder.takeprofit_levels:
-            tp = next((lvl for lvl in morder.takeprofit_levels if 'filled' not in lvl and not lvl.get('hidden')), None)
+            order_to_track.takeprofit_order = corder
+            order_to_track.takeprofit_price = corder.open_price
+            order_to_track.takeprofit_quantity = corder.quantity
+        elif incoming_order_to_track.takeprofit_levels:
+            tp = next((lvl for lvl in incoming_order_to_track.takeprofit_levels if 'filled' not in lvl and not lvl.get('hidden')), None)
             if tp:
-                order.tp_mode = 1
-                order.takeprofit_price = tp['stop_price']
-                order.takeprofit_quantity = tp['quantity']
-            elif order.trailing:
-                order.takeprofit_price = 0
+                order_to_track.tp_mode = 1
+                order_to_track.takeprofit_price = tp['stop_price']
+                order_to_track.takeprofit_quantity = tp['quantity']
+            elif order_to_track.trailing:
+                order_to_track.takeprofit_price = 0
             else:
                 return
 
-        tb = morder.takebuy_levels and next((lvl for lvl in morder.takebuy_levels if 'filled' not in lvl), None)
+        tb = incoming_order_to_track.takebuy_levels and next((lvl for lvl in incoming_order_to_track.takebuy_levels if 'filled' not in lvl), None)
         if tb:
-            order.takebuy_price = tb['price']
+            order_to_track.takebuy_price = tb['price']
 
-        ap = morder.autotrade_levels and next((lvl for lvl in morder.autotrade_levels if 'filled' not in lvl), None)
-        order.autobuy_price = ap and ap['price'] or None
+        ap = incoming_order_to_track.autotrade_levels and next((lvl for lvl in incoming_order_to_track.autotrade_levels if 'filled' not in lvl), None)
+        order_to_track.autobuy_price = ap and ap['price'] or None
 
-        self.orders.append(order)
-        # print('out')
+        self.orders_to_track.append(order_to_track)
+        # logger.info('out')
 
     def sync_orders(self):
+        """
+        Синхронизирую и добавление ордеров в массив для отслеживания в потоках
+        """
         with self.lock:
-            print(f'sync {self.account.name}')
-            self.orders.clear()
+            logger.info(f'Синхронизирую ордера для отслеживания {self.account.name}')
+            self.orders_to_track.clear()
             self.symbols.clear()
 
             # reload orders info
@@ -812,25 +989,27 @@ class AccountClient:
                                                (Q(status=OrderStatus.ACTIVE) & ~Q(order_id='') & ~Q(order_id__isnull=True) & Q(expert__isnull=True)
                                                 | Q(status=OrderStatus.PENDING) & Q(parent_order__isnull=True))):  # type: Order
                 self.add_order(morder)
-            print('sync done')
 
     def sync_order(self, order):
+        """
+        Синхронизирую и добавление ордеров в массив для отслеживания в потоках
+        """
         with self.lock:
-            for i in reversed(range(len(self.orders))):
-                if hasattr(self.orders[i], "order") and self.orders[i].order.id == order.id:
-                    del self.orders[i]
+            for i in reversed(range(len(self.orders_to_track))):
+                if hasattr(self.orders_to_track[i], "order") and self.orders_to_track[i].order.id == order.id:
+                    del self.orders_to_track[i]
             if order.status in (OrderStatus.CANCELLED, OrderStatus.CLOSED):
-                _r_quotes.hset('orders', order.id, 0)
+                redis_access.hset('orders', order.id, 0)
                 return
             self.add_order(order)
 
     def open_order(self, symbol: Symbol, bot: Bot, strategy: Strategy, price: float, signal: Signal):
-        print("> open order " + self.account.name)
+        logger.info("> open order " + self.account.name)
 
         # subscribe to quotes
         if symbol.name not in self.symbols:
             # logger.info(f'подписка на пару {symbol.name}')
-            print("> subscribe")
+            logger.info("> subscribe")
             subscribe_symbol(symbol.name)
             self.symbols.append(symbol.name)
 
@@ -840,7 +1019,7 @@ class AccountClient:
             return
 
         if bot.one_order_per_symbol:
-            has_order = next((order for order in self.orders
+            has_order = next((order for order in self.orders_to_track
                               if order.mode in (TradingMode.BuyReady, TradingMode.InMarket, TradingMode.Ready)
                               and order.bot
                               and order.bot.id == bot.id
@@ -851,142 +1030,19 @@ class AccountClient:
                 return
 
         with self.lock:
-            order = NOrder(TradingMode.BuyReady, symbol.name, bot, strategy, signal, price)
+            order = OrderToTrack(TradingMode.BuyReady, symbol.name, bot, strategy, signal, price)
             order.tp_mode = strategy.tp_mode
-            self.orders.append(order)
+            self.orders_to_track.append(order)
 
-        print("> process tickers")
+        logger.info("> process tickers")
         self.process_tickers(symbol.name, True)
-
-    def smart_order(self, order: Order):
-        if order.symbol.name not in self.symbols:
-            # logger.info(f'подписка на пару {symbol.name}')
-            subscribe_symbol(order.symbol.name)
-            self.symbols.append(order.symbol.name)
-
-        if order.symbol.name not in subscriptions:
-            logger.error(f'не удалось открыть ордер по причине отсутствия подписки на пару {order.symbol.name}')
-            return
-
-        with self.lock:
-            norder = NOrder(TradingMode.PendingBuy if order.status == OrderStatus.PENDING else TradingMode.BuyReady, order.symbol.name, None, None, None, order.open_price)
-            norder.tp_mode = 1
-            norder.order = order
-            self.orders.append(norder)
-
-        logger.info(f"ордер #{order.id} успешно создан", order=order)
-
-        self.process_tickers(order.symbol.name, True)
-
-
-def process_ticker(msg: dict):
-    global subscriptions
-    quote: NQuote = subscriptions[msg['s']]
-    quote.ask = float(msg['a'])
-    quote.bid = float(msg['b'])
-
-    check = _r_quotes.lindex(f'track{msg["s"]}', -1)
-    last_item = {}
-    if check:
-        last_item = json.loads(check)
-    if not check or last_item["a"] != msg["a"] or last_item["b"] != msg["b"]:
-        _r_quotes.hset('quotes', msg['s'], float(msg['b']))
-        _r_quotes.hset('quotes_ask', msg['s'], float(msg['a']))
-
-        _r_quotes.publish('common.quotes', json.dumps({
-            'subscription': 'common.quotes',
-            'data': {
-                'symbol': msg['s'],
-                'price': msg['b'],
-                'ask': msg['a'],
-            }
-        }))
-
-        _r_quotes.rpush(f'track{msg["s"]}', json.dumps({
-            'E': int(msg["E"]),
-            'a': msg['a'],
-            'b': msg['b'],
-        }))
-
-        tick_processing.send(sender=NQuote, symbol=msg['s'], quote=quote)
-    # logger.info(f'{msg["s"]} {msg["a"]}')
-    """
-    for client in list(clients.values()):  # type: AccountClient
-        if msg['s'] in client.symbols:
-            client.process_ticker(msg)
-    """
-
-
-def process_multi_ticker(msgs: list):
-    try:
-        for msg in msgs:
-            if msg['s'] in subscriptions:
-                process_ticker(msg)
-        for k in clients:
-            # workers_queue.put(i)
-            _r_quotes.rpush('jobs', k)
-    except:
-        print('\n'.join(traceback.format_exception(*sys.exc_info())))
-
-
-def subscribe_symbol(symbol: str):
-    global subscriptions, quotes_maker
-    if not quotes_maker:
-        logger.error('отсутствует базовое соединение для подписки на котировки')
-        return
-    if symbol not in subscriptions:
-        try:
-            tickers = quotes_maker._client.get_ticker()
-            for ticker in tickers:
-                if ticker['symbol'] in subscriptions:
-                    continue
-
-                # print('подписка на символ ' + ticker['symbol'])
-                sym, created = Symbol.objects.get_or_create(name=ticker['symbol'])
-                if created:
-                    with lock_instance(sym) as sym:
-                        symbol_info = quotes_maker._client.get_symbol_info(ticker['symbol'])
-                        min_lot = next(
-                            (float(f['minQty']) for f in symbol_info['filters'] if f['filterType'] == 'LOT_SIZE'), 0)
-                        min_notional = next(
-                            (float(f['minNotional']) for f in symbol_info['filters'] if
-                             f['filterType'] == 'MIN_NOTIONAL'), 0)
-                        tick_size = next(
-                            (float(f['tickSize']) for f in symbol_info['filters'] if f['filterType'] == 'PRICE_FILTER'),
-                            0)
-
-                        sym.min_notional = min_notional
-                        sym.min_lot = min_lot
-                        sym.tick_size = tick_size
-                        sym.base_asset = symbol_info['quoteAsset']
-                        sym.save()
-
-                quote = NQuote(
-                    float(ticker['askPrice']),
-                    float(ticker['bidPrice']),
-                    sym.min_lot,
-                    sym.min_notional,
-                    sym.tick_size
-                )
-                # if quote.min_notional > 0.001:
-                #    print(f'{ticker["symbol"]} == {quote.min_notional} !')
-
-                subscriptions[ticker['symbol']] = quote
-                # print('подписка выполнена')
-
-                # quotes_maker.start_symbol_ticker_socket(symbol, process_ticker)
-
-        except Exception as e:
-            traceback.print_exc()
-            logger.error(f'не удалось подписаться на пару {symbol}: Ошибка {e}')
-            return
-
-        # process_ticker({'s': symbol, 'a': quote.ask, 'b': quote.bid})
-        # logger.info('пара подписана')
 
 
 def process_signal(signal_id):
-    print("> connect")
+    """
+    Отработка сигнала
+    """
+    logger.debug(f'Отрабаотываю сигнал')
     connect()
 
     signal = Signal.objects.get(id=signal_id)
@@ -995,7 +1051,7 @@ def process_signal(signal_id):
         try:
             res = TradeMate(auth).make_signal(signal)
         except:
-            print('trademate error')
+            logger.info('trademate error')
 
     query = Strategy.objects \
         .exclude(active=False) \
@@ -1028,29 +1084,3 @@ def process_signal(signal_id):
                 clients[strategy.guard_test_account_id].open_order(signal.symbol, signal.bot, strategy, signal.price, signal)
             else:
                 logger.info(f'аккаунт {strategy.guard_test_account.name} не подключен')
-
-
-'''
-def check_in_work(order_id: int) -> bool:
-    for client in clients.values():
-        if any(hasattr(o, "order") and o.order.id == order_id and o.mode != TradingMode.Stop for o in client.orders):
-            return True
-    return False
-'''
-
-
-def process_smart_order(order_id):
-    order = Order.objects.get(id=order_id)
-    if order.account_id not in clients:
-        logger.info(f'аккаунт {order.account.name} не подключен')
-    else:
-        clients[order.account.id].smart_order(order)
-
-
-def init_quotes_maker():
-    global quotes_maker
-
-    client = BClient('', '')
-    quotes_maker = BinanceSocketManager(client)
-    quotes_maker.start_ticker_socket(process_multi_ticker)
-    subscribe_symbol('')

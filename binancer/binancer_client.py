@@ -9,7 +9,7 @@ from binance.exceptions import BinanceAPIException
 from django.db import transaction
 from django.db.models.signals import post_save, post_delete, pre_save
 from django.dispatch import receiver
-from binance.client import Client as BClient
+from binance.client import Client as Binance_Client
 from redis import Redis
 
 from cryptoman.models import *
@@ -20,31 +20,81 @@ logger = logging.getLogger("")
 
 redis_host = os.getenv('REDIS_HOST', 'localhost')
 redis_password = os.getenv('REDIS_PASSWORD', '')
-_r: Redis = redis.client.StrictRedis(host=redis_host, password=redis_password)
+redis_access: Redis = redis.client.StrictRedis(host=redis_host, password=redis_password)
 
-clients: typing.Dict[int, BClient] = {}
-quotes_maker: BClient = None
+binance_clients: typing.Dict[int, Binance_Client] = {}
+quotes_maker: Binance_Client = None
+
+
+def _r_publish(channel, data):
+    redis_access.rpush('binance', json.dumps({
+        'channel': channel,
+        'data': data
+    }))
+
+
+def process_signal(signal: Signal):
+    _r_publish('signal', signal.id)
+
+
+def sync_orders(account_id):
+    _r_publish('sync', account_id)
+
+
+def sync_order(order_id):
+    _r_publish('sync_order', order_id)
+
+
+def trade(command, order_id: int, quantity, sync: bool):
+    _r_publish('trade', [command, order_id, quantity, sync])
+
+
+def account_reconnect(account_id):
+    _r_publish('reconnect', account_id)
+
+
+def smart_order(order_id):
+    _r_publish('smart_order', order_id)
+
+
+def get_quotes():
+    tickers = redis_access.hgetall('quotes')
+    return dict((str(k, encoding='utf-8'), float(v)) for k, v in tickers.items())
+
+
+def get_bid(symbol):
+    price = redis_access.hget('quotes', symbol)
+    return float(str(price, encoding='utf-8'))
+
+
+def get_ask(symbol):
+    price = redis_access.hget('quotes_ask', symbol)
+    return float(str(price, encoding='utf-8'))
+
+
+def check_in_work(order_id):
+    return bool(redis_access.hget('orders', order_id))
 
 
 def connect():
     global quotes_maker
 
     for account in Account.objects.all().order_by('is_demo'):
-        if account.id in clients:
+        if account.id in binance_clients:
             continue
 
         if account.is_demo:
-            bclient = None
+            binance_client = None
         else:
             try:
-                bclient = BClient(account.api_key, account.secret_key, requests_params={'timeout': 3})
+                binance_client = Binance_Client(account.api_key, account.secret_key, requests_params={'timeout': 3})
             except Exception as e:
                 logger.error(f'ошибка подключения к Binance {account.name} - {str(e)}')
                 continue
 
         if not quotes_maker:
-            quotes_maker = bclient
-        clients[account.id] = bclient
+            quotes_maker = binance_client
+        binance_clients[account.id] = binance_client
 
 
 def get_balances(account: Account, filter_min: bool = False) -> typing.Dict[str, float]:
@@ -52,16 +102,16 @@ def get_balances(account: Account, filter_min: bool = False) -> typing.Dict[str,
     if account.is_demo:
         return account.balance
 
-    if account.id not in clients:
+    if account.id not in binance_clients:
         return {}
 
     try:
-        balances = clients[account.id].get_account()['balances']
+        balances = binance_clients[account.id].get_account()['balances']
     except BinanceAPIException:
         return {}
     if filter_min:
         result = {}
-        all_info = clients[account.id]._get('exchangeInfo')
+        all_info = binance_clients[account.id]._get('exchangeInfo')
         for b in balances:
             amount = float(b['free']) + float(b['locked'])
             if amount > 0.0:
@@ -77,24 +127,8 @@ def get_balances(account: Account, filter_min: bool = False) -> typing.Dict[str,
 
     return result
 
-
-def get_quotes():
-    tickers = _r.hgetall('quotes')
-    return dict((str(k, encoding='utf-8'), float(v)) for k, v in tickers.items())
-
-
-def get_bid(symbol):
-    price = _r.hget('quotes', symbol)
-    return float(str(price, encoding='utf-8'))
-
-
-def get_ask(symbol):
-    price = _r.hget('quotes_ask', symbol)
-    return float(str(price, encoding='utf-8'))
-
-
-def check_in_work(order_id):
-    return bool(_r.hget('orders', order_id))
+def get_all_balances(account):
+    return []
 
 
 def total_btc(account: Account, base_coin='BTC') -> typing.Tuple[float, float]:
@@ -104,11 +138,11 @@ def total_btc(account: Account, base_coin='BTC') -> typing.Tuple[float, float]:
         balances = [{'asset': k, 'free': v, 'locked': 0} for k, v in account.balance.items()]
         # tickers = quotes_maker._client.get_symbol_ticker()
     else:
-        if account.id not in clients:
+        if account.id not in binance_clients:
             connect()
-        if account.id not in clients:
+        if account.id not in binance_clients:
             return 0, 0
-        balances = clients[account.id].get_account()['balances']
+        balances = binance_clients[account.id].get_account()['balances']
         # tickers = clients[account.id].client.get_symbol_ticker()
 
     free = 0
@@ -177,37 +211,6 @@ def calc_commission(instance: Order, result: dict, volume):
     return commission
 
 
-def _r_publish(channel, data):
-    _r.rpush('binance', json.dumps({
-        'channel': channel,
-        'data': data
-    }))
-
-
-def process_signal(signal: Signal):
-    _r_publish('signal', signal.id)
-
-
-def sync_orders(account_id):
-    _r_publish('sync', account_id)
-
-
-def sync_order(order_id):
-    _r_publish('sync_order', order_id)
-
-
-def trade(command, order_id: int, quantity, sync: bool):
-    _r_publish('trade', [command, order_id, quantity, sync])
-
-
-def account_reconnect(account_id):
-    _r_publish('reconnect', account_id)
-
-
-def smart_order(order_id):
-    _r_publish('smart_order', order_id)
-
-
 @receiver(post_save, sender=Signal)
 def signal_post_save(sender, created: bool, instance: Signal, **kwargs):
     if created:
@@ -227,6 +230,8 @@ def order_pre_save(sender, instance: Order, **kwargs):
 def order_post_save(sender, created: bool, instance: Order, **kwargs):
     # if not instance.order_id:
     #    logger.info(f'запись ордера без кода {instance.__dict__}', order=instance)
+
+    logger.debug("order_post_save")
 
     if is_dirty(instance):
         return
@@ -296,9 +301,9 @@ def account_pre_save(sender, instance: Account, **kwargs):
 @receiver(post_save, sender=Account)
 def account_post_save(sender, instance: Account, **kwargs):
     if not instance.is_demo:
-        if instance.id in clients:
+        if instance.id in binance_clients:
             connect()
             sync_orders(instance.id)
         else:
-            clients[instance.id] = BClient(instance.api_key, instance.secret_key)
+            binance_clients[instance.id] = Binance_Client(instance.api_key, instance.secret_key)
             account_reconnect(instance.id)
